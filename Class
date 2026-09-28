@@ -1,0 +1,392 @@
+import React, { useState, useMemo, useEffect } from 'react';
+import { 
+  Search, Wind, Users, Sparkles, Activity, 
+  MapPin, MessageSquare, Play, AlertCircle, Building2
+} from 'lucide-react';
+
+const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+const FLOOR_ORDER = ['Ground Floor', '1st Floor', '2nd Floor', '3rd Floor', '4th Floor', '5th Floor', '6th Floor', '7th Floor'];
+
+// Hardcoded dataset perfectly mapped to the 7-floor architecture
+const ROOM_METADATA = [
+  // Ground Floor (Workshops & Labs)
+  { id: 'Workshop (IST 20, 21)', floor: 'Ground Floor', ac: false, capacity: 60, type: 'Workshop' },
+  { id: 'Che Lab', floor: 'Ground Floor', ac: true, capacity: 60, type: 'Lab' },
+  { id: 'NSS 201', floor: 'Ground Floor', ac: false, capacity: 40, type: 'Activity Room' },
+  
+  // 1st Floor
+  { id: 'IST 106', floor: '1st Floor', ac: true, capacity: 50, type: 'Classroom' },
+  { id: 'IST 107', floor: '1st Floor', ac: true, capacity: 50, type: 'Lab' },
+  { id: 'IST 108', floor: '1st Floor', ac: true, capacity: 50, type: 'Lab' },
+  
+  // 2nd Floor
+  { id: 'IST 201', floor: '2nd Floor', ac: true, capacity: 50, type: 'Classroom' },
+  { id: 'IST 211', floor: '2nd Floor', ac: true, capacity: 50, type: 'Classroom' },
+  { id: 'IST 225', floor: '2nd Floor', ac: true, capacity: 50, type: 'Classroom' },
+  { id: 'IST 227', floor: '2nd Floor', ac: true, capacity: 50, type: 'Classroom' },
+  
+  // 3rd Floor
+  { id: 'IST 309', floor: '3rd Floor', ac: true, capacity: 60, type: 'Lab' },
+  
+  // 4th Floor
+  { id: 'IST 401', floor: '4th Floor', ac: true, capacity: 60, type: 'Classroom' },
+  { id: 'IST 411', floor: '4th Floor', ac: true, capacity: 60, type: 'Classroom' },
+  { id: 'IST 416', floor: '4th Floor', ac: true, capacity: 60, type: 'Classroom' },
+  
+  // 5th Floor
+  { id: 'IST 502', floor: '5th Floor', ac: true, capacity: 50, type: 'Classroom' },
+  { id: 'IST 510', floor: '5th Floor', ac: true, capacity: 50, type: 'Classroom' },
+  { id: 'IST 518', floor: '5th Floor', ac: true, capacity: 50, type: 'Classroom' },
+  { id: 'IST 519', floor: '5th Floor', ac: true, capacity: 50, type: 'Classroom' },
+  { id: 'IST 520', floor: '5th Floor', ac: true, capacity: 50, type: 'Classroom' },
+  
+  // 6th Floor
+  { id: 'IST 602', floor: '6th Floor', ac: true, capacity: 100, type: 'Hall' },
+  { id: 'IST 609', floor: '6th Floor', ac: true, capacity: 60, type: 'Classroom' },
+  { id: 'IST 617', floor: '6th Floor', ac: true, capacity: 60, type: 'Lab' },
+  { id: 'IST 618', floor: '6th Floor', ac: true, capacity: 60, type: 'Lab' },
+  { id: 'IST 625', floor: '6th Floor', ac: true, capacity: 60, type: 'Classroom' },
+  { id: 'IST 626', floor: '6th Floor', ac: true, capacity: 60, type: 'Classroom' },
+  
+  // 7th Floor
+  { id: 'IST 702', floor: '7th Floor', ac: true, capacity: 60, type: 'Classroom' },
+  { id: 'IST 710', floor: '7th Floor', ac: true, capacity: 60, type: 'Classroom' },
+];
+
+const generateTimetableData = () => {
+  const data = {};
+  ROOM_METADATA.forEach((room, index) => {
+    data[room.id] = {};
+    DAYS.forEach((day, dayIdx) => {
+      const periods = [];
+      for (let p = 1; p <= 9; p++) {
+        // Deterministic pseudo-random generation based on room id, day, and period
+        const hash = room.id.charCodeAt(room.id.length - 1) + dayIdx * 3 + p * 7 + index;
+        // Approx 60% chance the room is EMPTY (true) for better demo display
+        periods.push(hash % 5 !== 0); 
+      }
+      // Force some specific consecutive free blocks for robust AI demo testing
+      if (room.floor === 'Ground Floor' && room.ac) {
+        periods[2] = true; periods[3] = true; // Tues P3, P4
+        periods[5] = true; periods[6] = true; // Mon P6, P7
+      }
+      data[room.id][day] = periods;
+    });
+  });
+  return data;
+};
+
+const TIMETABLE_JSON = generateTimetableData();
+
+const NeonStatusBadge = ({ isEmpty }) => (
+  <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-[10px] font-black tracking-widest uppercase border backdrop-blur-md transition-all duration-500 ${
+    isEmpty 
+      ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/40 shadow-[0_0_15px_rgba(16,185,129,0.3)]' 
+      : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+  }`}>
+    <span className="relative flex h-2 w-2">
+      {isEmpty && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>}
+      <span className={`relative inline-flex rounded-full h-2 w-2 ${isEmpty ? 'bg-emerald-400' : 'bg-rose-500'}`}></span>
+    </span>
+    {isEmpty ? 'Available' : 'Occupied'}
+  </div>
+);
+
+export default function SmartSearchFloorManager() {
+  // Default Context: Monday, Period 6
+  const [appContext, setAppContext] = useState({
+    day: 'Monday',
+    startPeriod: 6,
+    duration: 1,
+    floor: null,
+    isAC: null,
+    summary: 'Displaying overall campus availability for Monday, Period 6.'
+  });
+  
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
+
+  const filteredFloors = useMemo(() => {
+    const { day, startPeriod, duration, floor, isAC } = appContext;
+    
+    // Group results by floor
+    const grouped = {};
+    FLOOR_ORDER.forEach(f => grouped[f] = []);
+
+    ROOM_METADATA.forEach(room => {
+      // 1. Check AC Requirement
+      if (isAC !== null && room.ac !== isAC) return;
+
+      // 2. Check Floor Requirement (Fuzzy match mapping)
+      if (floor) {
+        const queryFloor = floor.toLowerCase().replace(/floor/g, '').trim();
+        const roomFloor = room.floor.toLowerCase();
+        
+        const isMatch = roomFloor.includes(queryFloor) || 
+                        (queryFloor === "ground" && roomFloor.includes("ground")) ||
+                        (["1st", "first", "1"].includes(queryFloor) && roomFloor.includes("1st")) ||
+                        (["2nd", "second", "2"].includes(queryFloor) && roomFloor.includes("2nd")) ||
+                        (["3rd", "third", "3"].includes(queryFloor) && roomFloor.includes("3rd")) ||
+                        (["4th", "fourth", "4"].includes(queryFloor) && roomFloor.includes("4th")) ||
+                        (["5th", "fifth", "5"].includes(queryFloor) && roomFloor.includes("5th")) ||
+                        (["6th", "sixth", "6"].includes(queryFloor) && roomFloor.includes("6th")) ||
+                        (["7th", "seventh", "7"].includes(queryFloor) && roomFloor.includes("7th"));
+        if (!isMatch) return;
+      }
+
+      // 3. Check Consecutive Availability
+      const searchDay = DAYS.includes(day) ? day : 'Monday';
+      const schedule = TIMETABLE_JSON[room.id][searchDay];
+      if (!schedule) return;
+
+      const startIdx = Math.max(1, Math.min(startPeriod, 9)) - 1; // Clamp between 0-8
+      const searchDuration = Math.max(1, duration);
+      
+      let consecutiveEmpty = true;
+      for (let i = 0; i < searchDuration; i++) {
+        const checkIdx = startIdx + i;
+        if (checkIdx >= 9 || schedule[checkIdx] === false) {
+          consecutiveEmpty = false;
+          break;
+        }
+      }
+
+      if (consecutiveEmpty) {
+        grouped[room.floor].push(room);
+      }
+    });
+
+    return grouped;
+  }, [appContext]);
+
+  const handleAISearch = async () => {
+    if (!searchQuery.trim()) return;
+    setIsSearching(true);
+    setErrorMsg('');
+
+    try {
+      const apiKey = ""; // Canvas handles API key natively
+      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
+
+      const systemPrompt = `You are an AI assistant for a smart room management app.
+      Analyze the user's request and extract exact parameters.
+      If a parameter isn't mentioned, default to: Day = "Monday", startPeriod = 6, duration = 1.
+      
+      Return ONLY valid JSON matching this schema:
+      {
+        "day": "Monday" | "Tuesday" | "Wednesday" | "Thursday" | "Friday",
+        "startPeriod": <Number 1-9>,
+        "duration": <Number of consecutive periods, default 1>,
+        "floor": "<String matching: 'Ground Floor', '1st Floor', '2nd Floor', etc., or null>",
+        "isAC": <Boolean if AC requested, false if non-AC requested, null if not mentioned>,
+        "summary": "<String: A friendly 1-sentence summary of what you found based on their request>"
+      }`;
+
+      const payload = {
+        contents: [{ parts: [{ text: `Query: "${searchQuery}"` }] }],
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        generationConfig: { responseMimeType: "application/json" }
+      };
+
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const result = await response.json();
+      const candidate = result.candidates?.[0];
+
+      if (candidate && candidate.content?.parts?.[0]?.text) {
+        const jsonString = candidate.content.parts[0].text;
+        const parsedParams = JSON.parse(jsonString);
+        
+        setAppContext({
+          day: parsedParams.day || 'Monday',
+          startPeriod: parsedParams.startPeriod || 6,
+          duration: parsedParams.duration || 1,
+          floor: parsedParams.floor || null,
+          isAC: parsedParams.isAC !== undefined ? parsedParams.isAC : null,
+          summary: parsedParams.summary || 'Here are the rooms matching your exact requirements.'
+        });
+      } else {
+        throw new Error("Failed to parse AI response.");
+      }
+    } catch (err) {
+      console.error("AI Search Error:", err);
+      setErrorMsg("Connection to AI disrupted. Please try rephrasing your search.");
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-200 font-sans selection:bg-violet-500/30 overflow-x-hidden relative pb-20">
+      
+      {/* Deep Midnight Ambient Background Accents */}
+      <div className="fixed top-[-10%] left-[-10%] w-[50vw] h-[50vw] rounded-full bg-violet-900/10 blur-[150px] pointer-events-none"></div>
+      <div className="fixed bottom-[-10%] right-[-10%] w-[50vw] h-[50vw] rounded-full bg-fuchsia-900/10 blur-[150px] pointer-events-none"></div>
+
+      {/* Header */}
+      <header className="sticky top-0 z-50 bg-slate-950/70 backdrop-blur-2xl border-b border-slate-800/80 shadow-[0_4px_30px_rgba(0,0,0,0.5)]">
+        <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="relative group cursor-default">
+              <div className="absolute inset-0 bg-gradient-to-r from-violet-500 to-fuchsia-500 blur-lg opacity-40 transition-opacity duration-500 rounded-xl animate-pulse"></div>
+              <div className="relative bg-slate-900 border border-slate-700/50 p-2.5 rounded-xl">
+                <Building2 className="w-6 h-6 text-fuchsia-400" />
+              </div>
+            </div>
+            <div>
+              <h1 className="text-xl font-black bg-clip-text text-transparent bg-gradient-to-r from-white via-slate-200 to-slate-400 tracking-tight leading-none">
+                SMART-SEARCH
+              </h1>
+              <p className="text-[10px] text-fuchsia-400 font-bold tracking-[0.3em] uppercase mt-1">
+                Floor Manager
+              </p>
+            </div>
+          </div>
+          
+          <div className="hidden sm:flex items-center gap-2 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-4 py-2 rounded-full text-xs font-black tracking-widest uppercase shadow-[0_0_15px_rgba(16,185,129,0.1)]">
+            <span className="relative flex h-2 w-2 mr-1">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400"></span>
+            </span>
+            AI System Online
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-7xl mx-auto px-6 py-12 relative z-10 space-y-12">
+        
+        {/* Core AI Smart Search Input */}
+        <section className="relative group">
+          <div className="absolute inset-0 bg-gradient-to-r from-violet-600/20 via-fuchsia-600/20 to-blue-600/20 rounded-3xl blur-2xl opacity-60 transition-opacity duration-700 group-focus-within:opacity-100"></div>
+          <div className="relative bg-slate-900/60 backdrop-blur-xl border border-slate-700/50 rounded-3xl p-6 shadow-2xl transition-all focus-within:border-fuchsia-500/50 focus-within:shadow-[0_0_40px_rgba(217,70,239,0.15)]">
+            
+            <div className="flex items-center gap-3 mb-4 pl-2">
+              <Sparkles className="w-5 h-5 text-fuchsia-400 animate-pulse" />
+              <h2 className="text-sm font-black tracking-widest uppercase text-transparent bg-clip-text bg-gradient-to-r from-violet-400 to-fuchsia-400">Natural Language Search</h2>
+            </div>
+
+            <div className="relative flex items-center w-full">
+              <Search className="absolute left-6 w-7 h-7 text-slate-500 transition-colors" />
+              <input 
+                type="text" 
+                className="w-full bg-slate-950 border border-slate-800 text-white rounded-2xl py-6 pl-16 pr-44 focus:outline-none focus:ring-1 focus:ring-fuchsia-500/50 transition-all text-lg md:text-xl placeholder-slate-600 font-medium shadow-inner"
+                placeholder="I need a room on the 5th floor for 2 hours on Tuesday starting period 3..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleAISearch()}
+                autoFocus
+              />
+              <button 
+                onClick={handleAISearch}
+                disabled={isSearching}
+                className="absolute right-3 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 text-white font-black uppercase tracking-wider py-4 px-8 rounded-xl transition-all shadow-[0_0_20px_rgba(217,70,239,0.4)] disabled:opacity-50 disabled:shadow-none flex items-center gap-2 text-sm border border-fuchsia-400/30"
+              >
+                {isSearching ? <Activity className="w-5 h-5 animate-spin" /> : <Play className="w-5 h-5 fill-current" />}
+                {isSearching ? 'Processing' : 'Analyze'}
+              </button>
+            </div>
+
+            {errorMsg && (
+              <div className="mt-4 mx-2 p-4 bg-rose-500/10 border border-rose-500/20 rounded-xl text-rose-400 flex items-center gap-3 text-sm font-bold">
+                <AlertCircle className="w-5 h-5" /> {errorMsg}
+              </div>
+            )}
+          </div>
+        </section>
+
+        <section className="animate-in slide-in-from-top-4 fade-in duration-700">
+          <div className="bg-slate-900/60 backdrop-blur-md border border-slate-700/50 rounded-3xl p-6 md:p-8 flex flex-col md:flex-row gap-6 items-center shadow-xl">
+            <div className="bg-violet-500/10 p-4 rounded-full border border-violet-500/20 flex-shrink-0">
+              <MessageSquare className="w-8 h-8 text-violet-400" />
+            </div>
+            <div className="flex-1 text-center md:text-left">
+              <p className="text-lg md:text-xl font-medium text-slate-100 leading-relaxed">
+                "{appContext.summary}"
+              </p>
+              <div className="mt-4 flex flex-wrap items-center justify-center md:justify-start gap-2 text-[11px] font-black tracking-widest uppercase text-slate-400">
+                <span className="bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800 text-violet-400 shadow-inner">Day: {appContext.day}</span>
+                <span className="bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800 text-violet-400 shadow-inner">Start Period: {appContext.startPeriod}</span>
+                <span className="bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800 text-fuchsia-400 shadow-inner">Duration: {appContext.duration} {appContext.duration > 1 ? 'Periods' : 'Period'}</span>
+                {appContext.floor && <span className="bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800 text-blue-400 shadow-inner">Floor: {appContext.floor}</span>}
+                {appContext.isAC !== null && <span className="bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800 text-emerald-400 shadow-inner">{appContext.isAC ? 'AC Requested' : 'Non-AC'}</span>}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="space-y-12 pt-4">
+          {FLOOR_ORDER.map(floorName => {
+            const roomsOnFloor = filteredFloors[floorName];
+            
+            if (!roomsOnFloor || roomsOnFloor.length === 0) return null;
+
+            return (
+              <div key={floorName} className="relative animate-in fade-in duration-500">
+                
+                {/* Floor Header Badge */}
+                <div className="inline-block mb-6 relative z-20">
+                  <div className="bg-slate-900/80 backdrop-blur-xl border border-slate-700/50 px-5 py-2.5 rounded-xl shadow-lg flex items-center gap-3">
+                    <MapPin className="w-4 h-4 text-fuchsia-400" />
+                    <h3 className="text-sm font-black text-slate-100 tracking-widest uppercase">{floorName}</h3>
+                    <span className="ml-2 bg-slate-800 text-slate-300 px-2.5 py-0.5 rounded text-xs font-bold border border-slate-700">{roomsOnFloor.length} Match{roomsOnFloor.length > 1 ? 'es' : ''}</span>
+                  </div>
+                </div>
+
+                {/* Rooms Grid for this floor */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+                  {roomsOnFloor.map(room => (
+                    <div 
+                      key={room.id}
+                      className="group relative overflow-hidden rounded-2xl bg-slate-900/60 backdrop-blur-md border border-slate-700/50 transition-all duration-300 hover:-translate-y-1 hover:border-violet-500/50 hover:bg-slate-800/80 hover:shadow-[0_10px_40px_rgba(139,92,246,0.15)] cursor-default"
+                    >
+                      {/* Top Glowing Bar */}
+                      <div className="absolute top-0 left-0 w-full h-[3px] bg-emerald-500 shadow-[0_0_15px_#10b981]"></div>
+
+                      <div className="p-6">
+                        <div className="flex justify-between items-start mb-6">
+                          <h4 className="text-2xl font-black text-slate-100 tracking-tight">{room.id}</h4>
+                          <NeonStatusBadge isEmpty={true} />
+                        </div>
+
+                        <div className="flex items-center gap-2 mt-4">
+                          <div className="flex items-center gap-1.5 text-xs font-bold text-slate-300 bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800">
+                            <Users className="w-4 h-4 text-slate-400" />
+                            {room.capacity}
+                          </div>
+                          <div className={`flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg border ${
+                            room.ac ? 'text-cyan-400 bg-cyan-950/30 border-cyan-500/30' : 'text-slate-400 bg-slate-950 border-slate-800'
+                          }`}>
+                            <Wind className="w-4 h-4" />
+                            {room.ac ? 'AC' : 'Non-AC'}
+                          </div>
+                          <div className="flex items-center gap-1.5 text-xs font-bold text-violet-300 bg-violet-950/30 px-3 py-1.5 rounded-lg border border-violet-500/20 ml-auto uppercase tracking-wider">
+                             {room.type}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+          
+          {/* Fallback if absolutely no rooms match the complex query */}
+          {Object.values(filteredFloors).every(arr => arr.length === 0) && (
+            <div className="text-center py-24 bg-slate-900/40 rounded-3xl border border-slate-800/50 backdrop-blur-md">
+              <AlertCircle className="w-16 h-16 text-slate-500/50 mx-auto mb-4" />
+              <h3 className="text-2xl font-black text-slate-300 mb-2">No Matches Found</h3>
+              <p className="text-slate-500 max-w-md mx-auto">The AI couldn't find any rooms matching your exact criteria for that time block. Try adjusting the floor, duration, or AC requirements.</p>
+            </div>
+          )}
+        </section>
+
+      </main>
+    </div>
+  );
+}
